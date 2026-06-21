@@ -1,0 +1,5 @@
+node_modules/
+.next/
+data/renxiao.db
+data/renxiao.db-shm
+data/renxiao.db-wal
