@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
-import { ConcernCompareChart, NegotiationChart, WeaknessWordCloud, WeaknessCategoryChart, RepModelCompareChart, InterestLevelChart } from '@/components/CapabilityCharts';
+import { ConcernCompareChart, NegotiationChart, WeaknessWordCloud, WeaknessCategoryChart, RepModelCompareChart, InterestLevelChart, CoverageBarChart, RepTrendChart } from '@/components/CapabilityCharts';
 
 const CONCERN_OPTIONS = ['价格', '质量', '售后', '品牌', '外观', '尺寸', '功能'];
 const EXPLAINED_OPTIONS = ['价格', '质量', '售后', '品牌', '外观', '尺寸', '功能', '对比'];
@@ -12,8 +12,15 @@ export default function CapabilityPage() {
   const [records, setRecords] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [models, setModels] = useState<any[]>([]);
   const [stores, setStores] = useState<any[]>([]);
+
+  // 筛选状态
+  const [filterSalesName, setFilterSalesName] = useState('');
+  const [filterModel, setFilterModel] = useState('');
+  const [filterResult, setFilterResult] = useState('');
+  const [filterWeakness, setFilterWeakness] = useState('');
 
   const [form, setForm] = useState({
     sales_name: '', store_id: '', region: '', model: '',
@@ -33,9 +40,17 @@ export default function CapabilityPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // 构建筛选查询
+      const filterParams = new URLSearchParams();
+      if (filterSalesName) filterParams.set('sales_name', filterSalesName);
+      if (filterModel) filterParams.set('model', filterModel);
+      if (filterResult) filterParams.set('result', filterResult);
+      if (filterWeakness) filterParams.set('weakness', filterWeakness);
+      const qs = filterParams.toString() ? `?${filterParams.toString()}` : '';
+
       const [anRes, recRes] = await Promise.all([
         fetch('/api/analytics/capability'),
-        fetch('/api/capability'),
+        fetch(`/api/capability${qs}`),
       ]);
       const an = await anRes.json();
       const rec = await recRes.json();
@@ -44,7 +59,7 @@ export default function CapabilityPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filterSalesName, filterModel, filterResult, filterWeakness]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -97,6 +112,21 @@ export default function CapabilityPage() {
     if (!confirm('确认删除该记录？')) return;
     await fetch(`/api/capability?id=${id}`, { method: 'DELETE' });
     load();
+  };
+
+  const handleClearAll = async () => {
+    if (!confirm('⚠️ 确认清空全部能力记录？此操作不可恢复！')) return;
+    setClearing(true);
+    try {
+      const r = await fetch('/api/capability', { method: 'DELETE' });
+      const d = await r.json();
+      alert(d.message || '已清空');
+      load();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setClearing(false);
+    }
   };
 
   return (
@@ -273,6 +303,30 @@ export default function CapabilityPage() {
             </div>
           </div>
 
+          {/* SOP v2.1: 讲解覆盖率 per rep */}
+          <div className="bg-surface border border-border rounded-xl p-5">
+            <h3 className="text-sm font-medium mb-4 text-text-secondary">
+              📊 讲解覆盖率（按销代）
+              <span className="ml-2 text-xs text-text-secondary">SOP标准：≥80%为合格</span>
+            </h3>
+            <CoverageBarChart data={analytics.coverageRates} standardDims={analytics.standardDimensions || []} />
+          </div>
+
+          {/* SOP v2.1: 30-day close rate trend per rep */}
+          {analytics.rep30DayTrend && Object.keys(analytics.rep30DayTrend).length > 0 && (
+            <div className="bg-surface border border-border rounded-xl p-5">
+              <h3 className="text-sm font-medium mb-4 text-text-secondary">📈 30天成交率趋势（按销代）</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Object.entries(analytics.rep30DayTrend).map(([name, data]: [string, any]) => (
+                  <div key={name} className="border border-border/50 rounded-lg p-3">
+                    <div className="text-sm font-medium mb-2">{name}</div>
+                    <RepTrendChart data={data} repName={name} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Per-model per-rep matrix */}
           <div className="bg-surface border border-border rounded-xl p-5">
             <h3 className="text-sm font-medium mb-4 text-text-secondary">
@@ -308,7 +362,45 @@ export default function CapabilityPage() {
 
       {/* History */}
       <div className="bg-surface border border-border rounded-xl p-5">
-        <h3 className="text-sm font-semibold mb-4">历史记录 · 共 {records.length} 条</h3>
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <h3 className="text-sm font-semibold">历史记录 · 共 {records.length} 条</h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* 筛选器 */}
+            <select value={filterSalesName} onChange={e => setFilterSalesName(e.target.value)}
+              className="bg-bg border border-border text-text-primary text-xs rounded-lg px-2 py-1.5">
+              <option value="">全部销代</option>
+              {SALES_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select value={filterModel} onChange={e => setFilterModel(e.target.value)}
+              className="bg-bg border border-border text-text-primary text-xs rounded-lg px-2 py-1.5">
+              <option value="">全部机型</option>
+              {models.map((m: any) => <option key={m.id} value={m.name}>{m.name}</option>)}
+            </select>
+            <select value={filterResult} onChange={e => setFilterResult(e.target.value)}
+              className="bg-bg border border-border text-text-primary text-xs rounded-lg px-2 py-1.5">
+              <option value="">全部结果</option>
+              <option value="成交">成交</option>
+              <option value="未成交">未成交</option>
+            </select>
+            <select value={filterWeakness} onChange={e => setFilterWeakness(e.target.value)}
+              className="bg-bg border border-border text-text-primary text-xs rounded-lg px-2 py-1.5">
+              <option value="">全部薄弱项</option>
+              {WEAKNESS_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {/* 重置筛选 */}
+            {(filterSalesName || filterModel || filterResult || filterWeakness) && (
+              <button onClick={() => { setFilterSalesName(''); setFilterModel(''); setFilterResult(''); setFilterWeakness(''); }}
+                className="text-xs text-text-secondary hover:text-text-primary px-2 py-1">
+                重置
+              </button>
+            )}
+            {/* 清空数据 */}
+            <button onClick={handleClearAll} disabled={clearing || records.length === 0}
+              className="px-2 py-1.5 text-xs text-danger border border-danger/30 rounded-lg hover:bg-danger/10 disabled:opacity-30 transition">
+              {clearing ? '清空中...' : '🗑️ 清空'}
+            </button>
+          </div>
+        </div>
         <div className="space-y-3">
           {records.map((r: any) => (
             <div key={r.id} className="border border-border/50 rounded-lg p-4 hover:bg-white/5 transition">

@@ -50,7 +50,7 @@ export default function ExcelImporter({ onImported }: { onImported?: () => void 
            status === 'error' ? msg :
            '拖拽 Excel 文件到此处，或点击选择文件'}
         </div>
-        <div className="text-xs text-text-secondary mt-2">支持 .xlsx / .xls，表头需包含：销售日期、业务员、型号、金额（可选：门店、客户区域、购买偏好、复购潜力、价位段）</div>
+        <div className="text-xs text-text-secondary mt-2">支持 .xlsx / .xls，表头需包含：销售日期、业务员、型号、金额。（系统自动识别门店名称、大区、战区、规格、颜色、产品线、订单号等列）</div>
       </div>
       {status !== 'idle' && status !== 'importing' && (
         <button onClick={() => { setStatus('idle'); setMsg(''); }} className="text-xs text-text-secondary hover:text-text-primary">

@@ -5,8 +5,9 @@ import { usePathname } from 'next/navigation';
 const nav = [
   { href: '/', label: '🏠 首页仪表盘' },
   { href: '/stores', label: '🏪 门店管理' },
+  { href: '/store-efficiency', label: '📊 店效分析' },
   { href: '/sales', label: '📈 销量分析' },
-  { href: '/capability', label: '🎯 能力缺陷' },
+  { href: '/capability', label: '🎯 能力诊断' },
 ];
 
 export default function Sidebar() {
@@ -34,7 +35,7 @@ export default function Sidebar() {
         })}
       </nav>
       <div className="text-xs text-text-secondary mt-4 pt-4 border-t border-border">
-        v2.0.0 · 人效分析
+        v2.2.0 · 人效分析
       </div>
     </aside>
   );

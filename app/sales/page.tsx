@@ -198,22 +198,24 @@ export default function SalesPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-text-secondary">
-                    {['日期', '门店', '销代', '机型', '数量', '单价', '金额', '客户区域'].map(h => (
+                    {['日期', '大区', '门店', '销代', '型号', '数量', '单价', '金额', '订单号', '渠道'].map(h => (
                       <th key={h} className="pb-3 pr-4 font-medium">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {records.slice(0, 30).map((r: any) => (
+                  {records.slice(0, 50).map((r: any) => (
                     <tr key={r.id} className="border-b border-border/50 hover:bg-white/5">
                       <td className="py-3 pr-4 font-mono text-xs">{r.sale_date}</td>
-                      <td className="py-3 pr-4 text-xs">{r.store_name || '-'}</td>
+                      <td className="py-3 pr-4 text-xs">{r.region_code || '-'}</td>
+                      <td className="py-3 pr-4 text-xs max-w-[180px] truncate" title={r.store_name || r.customer_name || ''}>{r.store_name || r.customer_name || '-'}</td>
                       <td className="py-3 pr-4">{r.sales_name}</td>
-                      <td className="py-3 pr-4 text-primary text-xs">{r.model}</td>
+                      <td className="py-3 pr-4 text-primary text-xs font-mono">{r.model}</td>
                       <td className="py-3 pr-4 text-right font-mono">{r.quantity}</td>
                       <td className="py-3 pr-4 text-right font-mono">¥{r.unit_price?.toLocaleString()}</td>
                       <td className="py-3 pr-4 text-right font-mono text-accent">¥{r.amount?.toLocaleString()}</td>
-                      <td className="py-3 pr-4 text-text-secondary text-xs max-w-[120px] truncate">{r.customer_address || '-'}</td>
+                      <td className="py-3 pr-4 text-text-secondary text-xs font-mono max-w-[100px] truncate" title={r.order_no}>{r.order_no?.slice(-8) || '-'}</td>
+                      <td className="py-3 pr-4 text-text-secondary text-xs">{r.channel_level1 || '-'}</td>
                     </tr>
                   ))}
                 </tbody>

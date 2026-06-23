@@ -4,6 +4,9 @@ import { getDb } from '@/lib/db';
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const region = searchParams.get('region');
+  const channel = searchParams.get('channel');
+  const city = searchParams.get('city');
+  const storeType = searchParams.get('store_type');
   const id = searchParams.get('id');
 
   const db = await getDb();
@@ -13,12 +16,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(row || null);
   }
 
-  let rows: any[];
-  if (region) {
-    rows = db.prepare('SELECT * FROM stores WHERE region = ? ORDER BY name').all(region);
-  } else {
-    rows = db.prepare('SELECT * FROM stores ORDER BY region, name').all();
-  }
+  const where: string[] = [];
+  const params: any[] = [];
+
+  if (channel) { where.push('channel = ?'); params.push(channel); }
+  if (region) { where.push('region = ?'); params.push(region); }
+  if (city) { where.push('city LIKE ?'); params.push(`%${city}%`); }
+  if (storeType) { where.push('store_type = ?'); params.push(storeType); }
+
+  const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
+
+  const rows = db.prepare(`SELECT * FROM stores ${whereClause} ORDER BY channel, name`).all(...params);
 
   return NextResponse.json({ data: rows, total: rows.length });
 }
@@ -28,16 +36,16 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const db = await getDb();
 
-    const { name, address, region, city, store_type, manager } = body;
+    const { name, store_code, address, region, city, store_type, manager, channel } = body;
 
-    if (!name || !region) {
-      return NextResponse.json({ error: '门店名称和区域必填' }, { status: 400 });
+    if (!name || !channel) {
+      return NextResponse.json({ error: '门店名称和渠道必填' }, { status: 400 });
     }
 
     const result = db.prepare(`
-      INSERT INTO stores (name, address, region, city, store_type, manager)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(name, address || '', region, city || '', store_type || '直营', manager || '');
+      INSERT INTO stores (name, store_code, address, region, city, store_type, manager, channel)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(name, store_code || '', address || '', region || '', city || '', store_type || '直营', manager || '', channel || 'KA渠道');
 
     return NextResponse.json({ id: result.lastInsertRowid, message: '门店已添加' });
   } catch (e: any) {
@@ -58,10 +66,10 @@ export async function PUT(req: NextRequest) {
     const db = await getDb();
 
     db.prepare(`
-      UPDATE stores SET name = ?, address = ?, region = ?, city = ?, store_type = ?, manager = ? WHERE id = ?
+      UPDATE stores SET name = ?, store_code = ?, address = ?, region = ?, city = ?, channel = ?, store_type = ?, manager = ? WHERE id = ?
     `).run(
-      body.name, body.address || '', body.region, body.city || '',
-      body.store_type || '直营', body.manager || '', parseInt(id)
+      body.name, body.store_code || '', body.address || '', body.region || '', body.city || '',
+      body.channel || 'KA渠道', body.store_type || '直营', body.manager || '', parseInt(id)
     );
 
     return NextResponse.json({ message: '门店已更新' });

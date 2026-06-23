@@ -22,8 +22,8 @@ export async function GET(req: NextRequest) {
     capParams.push(`${month}%`);
   }
   if (region) {
-    salesWhere.push('st.region = ?');
-    salesParams.push(region);
+    salesWhere.push("(st.region = ? OR s.region_code = ?)");
+    salesParams.push(region, region);
   }
   if (storeId) {
     salesWhere.push('s.store_id = ?');
@@ -89,13 +89,14 @@ export async function GET(req: NextRequest) {
     ORDER BY amount DESC
   `).all(...salesParams);
 
-  // Regional sales
+  // Regional sales (use store region or sales.region_code fallback)
   const regionalSales = db.prepare(`
-    SELECT st.region, SUM(s.amount) as amount, SUM(s.quantity) as quantity,
+    SELECT COALESCE(st.region, s.region_code, '未知') as region,
+           SUM(s.amount) as amount, SUM(s.quantity) as quantity,
            COUNT(DISTINCT s.store_id) as store_count
     FROM sales s LEFT JOIN stores st ON s.store_id = st.id
     ${salesWhereClause}
-    GROUP BY st.region
+    GROUP BY region
     ORDER BY amount DESC
   `).all(...salesParams);
 
@@ -142,6 +143,25 @@ export async function GET(req: NextRequest) {
     LIMIT 5
   `).all();
 
+  // ── 人效离散度 (std deviation of per-rep deal rates from capability records) ──
+  const repDealRates = db.prepare(`
+    SELECT sales_name,
+           COUNT(*) as total,
+           SUM(CASE WHEN price_negotiation_result = '成交' THEN 1 ELSE 0 END) as deals
+    FROM capability_records
+    GROUP BY sales_name
+    HAVING total >= 2
+  `).all() as any[];
+
+  let stdDeviation = 0;
+  let meanDealRate = 0;
+  if (repDealRates.length >= 2) {
+    const rates = repDealRates.map(r => Math.round((r.deals / r.total) * 100));
+    meanDealRate = Math.round(rates.reduce((s, v) => s + v, 0) / rates.length);
+    const variance = rates.reduce((s, v) => s + Math.pow(v - meanDealRate, 2), 0) / rates.length;
+    stdDeviation = Math.round(Math.sqrt(variance) * 10) / 10;
+  }
+
   return NextResponse.json({
     kpi: {
       totalAmount: total?.v || 0,
@@ -149,6 +169,9 @@ export async function GET(req: NextRequest) {
       salesCount: total?.n || 0,
       storeCount: storeCount?.n || 0,
       dealRate: totalCap?.c > 0 ? Math.round((dealRateRow?.c / totalCap?.c) * 100) : 0,
+      stdDeviation,
+      meanDealRate,
+      repCount: repDealRates.length,
     },
     monthly,
     modelShare,

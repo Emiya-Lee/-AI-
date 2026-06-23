@@ -1,5 +1,5 @@
 'use client';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
 
 const COLORS = { primary: '#6366f1', accent: '#22c55e', warning: '#f59e0b', danger: '#ef4444' };
 
@@ -156,5 +156,77 @@ export function InterestLevelChart({ data }: { data: Record<string, number> }) {
         );
       })}
     </div>
+  );
+}
+
+// ── SOP v2.1 New Charts ──
+
+export function CoverageBarChart({ data, standardDims }: { data: { sales_name: string; coverageRate: number; coveredDims: string[]; missingDims: string[]; closeRate: number }[]; standardDims: string[] }) {
+  if (!data || data.length === 0) return <div className="text-text-secondary text-sm">暂无数据</div>;
+  return (
+    <div className="space-y-3">
+      {data.map(r => (
+        <div key={r.sales_name} className="space-y-1">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-medium">{r.sales_name}</span>
+            <div className="flex items-center gap-2">
+              <span className={`text-xs px-2 py-0.5 rounded-full ${r.coverageRate >= 80 ? 'bg-accent/10 text-accent' : r.coverageRate >= 50 ? 'bg-warning/10 text-warning' : 'bg-danger/10 text-danger'}`}>
+                覆盖率 {r.coverageRate}%
+              </span>
+              <span className="text-xs text-text-secondary">· 成交率 {r.closeRate}%</span>
+            </div>
+          </div>
+          <div className="h-2.5 bg-border rounded-full overflow-hidden flex">
+            {standardDims.map((dim) => {
+              const covered = r.coveredDims.includes(dim);
+              return (
+                <div
+                  key={dim}
+                  className={`h-full flex-1 border-r border-bg/50 transition-all ${covered ? 'bg-primary' : 'bg-surface'}`}
+                  title={`${dim}: ${covered ? '已覆盖' : '未覆盖'}`}
+                />
+              );
+            })}
+          </div>
+          <div className="flex justify-between text-xs text-text-secondary px-0.5">
+            {standardDims.map(dim => (
+              <span key={dim} className={`truncate max-w-[60px] text-center ${r.missingDims.includes(dim) ? 'text-danger/70' : ''}`}>
+                {dim}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function RepTrendChart({ data, repName }: { data: { date: string; attempts: number; deals: number; rate: number }[]; repName: string }) {
+  if (!data || data.length === 0) return <div className="text-text-secondary text-xs">暂无趋势数据</div>;
+  return (
+    <ResponsiveContainer width="100%" height={120}>
+      <LineChart data={data}>
+        <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} />
+        <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} tickFormatter={v => `${v}%`} width={40} />
+        <Tooltip contentStyle={{ background: '#1a1d27', border: '1px solid #2e3340', borderRadius: 8, fontSize: 12 }}
+          formatter={(v: number) => `${v}%`} labelFormatter={l => `${repName} · ${l}`} />
+        <Line type="monotone" dataKey="rate" stroke="#6366f1" strokeWidth={2} dot={{ fill: '#6366f1', r: 3 }} />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+export function CoverageRadarChart({ data }: { data: { dimension: string; repsCovered: number; totalReps: number; pct: number }[] }) {
+  if (!data || data.length === 0) return <div className="text-text-secondary text-sm">暂无数据</div>;
+  const radarData = data.map(d => ({ dimension: d.dimension, '团队覆盖率': d.pct }));
+  return (
+    <ResponsiveContainer width="100%" height={280}>
+      <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="75%">
+        <PolarGrid stroke="#2e3340" />
+        <PolarAngleAxis dataKey="dimension" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+        <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} tickFormatter={v => `${v}%`} />
+        <Radar name="团队覆盖率" dataKey="团队覆盖率" stroke="#6366f1" fill="#6366f1" fillOpacity={0.2} strokeWidth={2} />
+      </RadarChart>
+    </ResponsiveContainer>
   );
 }

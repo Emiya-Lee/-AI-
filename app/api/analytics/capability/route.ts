@@ -145,6 +145,144 @@ export async function GET() {
   // Sort by negative gap (worst performers first)
   perModelPerRep.sort((a, b) => a.gap - b.gap);
 
+  // ── SOP Metrics: 讲解覆盖率 + 30天趋势 + 相关性R + 人效离散度 ──
+
+  const STANDARD_DIMENSIONS = ['品牌', '技术/功能', '竞品对比', '售后政策', '价格策略', '尺寸安装'];
+  const DIMENSION_MAP: Record<string, string> = {
+    '品牌': '品牌',
+    '质量': '技术/功能',
+    '功能': '技术/功能',
+    '对比': '竞品对比',
+    '售后': '售后政策',
+    '价格': '价格策略',
+    '尺寸': '尺寸安装',
+    '外观': '尺寸安装',
+  };
+
+  // Per-rep coverage rate
+  const repCoverage: Record<string, { dimensions: Set<string>; total: number; dealCount: number; dealTotal: number }> = {};
+  for (const r of parsed) {
+    const name = r.sales_name;
+    if (!repCoverage[name]) {
+      repCoverage[name] = { dimensions: new Set(), total: 0, dealCount: 0, dealTotal: 0 };
+    }
+    for (const e of r.sales_explained) {
+      const dim = DIMENSION_MAP[e];
+      if (dim) repCoverage[name].dimensions.add(dim);
+    }
+    repCoverage[name].total++;
+    repCoverage[name].dealTotal++;
+    if (r.price_negotiation_result === '成交') repCoverage[name].dealCount++;
+  }
+
+  // Coverage rate per rep (as percentage, array sorted for display)
+  const coverageRates: { sales_name: string; coverageRate: number; coveredDims: string[]; missingDims: string[]; closeRate: number }[] = [];
+  for (const [name, data] of Object.entries(repCoverage)) {
+    const coveredDims = Array.from(data.dimensions);
+    const missingDims = STANDARD_DIMENSIONS.filter(d => !data.dimensions.has(d));
+    coverageRates.push({
+      sales_name: name,
+      coverageRate: Math.round((coveredDims.length / STANDARD_DIMENSIONS.length) * 100),
+      coveredDims,
+      missingDims,
+      closeRate: data.dealTotal > 0 ? Math.round((data.dealCount / data.dealTotal) * 100) : 0,
+    });
+  }
+  coverageRates.sort((a, b) => b.coverageRate - a.coverageRate);
+
+  // Dimension-level coverage detail
+  const coverageDetail = STANDARD_DIMENSIONS.map(dim => {
+    const repsCovered = coverageRates.filter(r => r.coveredDims.includes(dim)).length;
+    return {
+      dimension: dim,
+      repsCovered,
+      totalReps: coverageRates.length,
+      pct: coverageRates.length > 0 ? Math.round((repsCovered / coverageRates.length) * 100) : 0,
+    };
+  });
+
+  // 30-day trend per rep (last 30 days, daily close rate)
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+  const cutoffDate = thirtyDaysAgo.toISOString().split('T')[0];
+
+  const rep30DayTrend: Record<string, { date: string; attempts: number; deals: number; rate: number }[]> = {};
+  for (const r of parsed) {
+    if (r.record_date < cutoffDate) continue;
+    const name = r.sales_name;
+    if (!rep30DayTrend[name]) rep30DayTrend[name] = [];
+    const date = r.record_date;
+    let entry = rep30DayTrend[name].find(e => e.date === date);
+    if (!entry) {
+      entry = { date, attempts: 0, deals: 0, rate: 0 };
+      rep30DayTrend[name].push(entry);
+    }
+    entry.attempts++;
+    if (r.price_negotiation_result === '成交') entry.deals++;
+  }
+  for (const name of Object.keys(rep30DayTrend)) {
+    rep30DayTrend[name] = rep30DayTrend[name].sort((a, b) => a.date.localeCompare(b.date));
+    for (const entry of rep30DayTrend[name]) {
+      entry.rate = Math.round((entry.deals / entry.attempts) * 100);
+    }
+  }
+
+  // Std deviation of per-rep close rates (人效离散度)
+  const closeRates = coverageRates.map(r => r.closeRate).filter(r => r > 0);
+  const meanCloseRate = closeRates.length > 0 ? closeRates.reduce((s, v) => s + v, 0) / closeRates.length : 0;
+  const variance = closeRates.length > 0
+    ? closeRates.reduce((s, v) => s + Math.pow(v - meanCloseRate, 2), 0) / closeRates.length
+    : 0;
+  const stdDeviation = Math.round(Math.sqrt(variance) * 10) / 10;
+
+  // Pearson correlation R: coverage rate vs close rate (讲解率→成交率)
+  const corrPairs = coverageRates.filter(r => r.coverageRate > 0 && r.closeRate > 0);
+  let correlationR: number | null = null;
+  if (corrPairs.length >= 3) {
+    const n = corrPairs.length;
+    const sumX = corrPairs.reduce((s, r) => s + r.coverageRate, 0);
+    const sumY = corrPairs.reduce((s, r) => s + r.closeRate, 0);
+    const sumXY = corrPairs.reduce((s, r) => s + r.coverageRate * r.closeRate, 0);
+    const sumX2 = corrPairs.reduce((s, r) => s + r.coverageRate * r.coverageRate, 0);
+    const sumY2 = corrPairs.reduce((s, r) => s + r.closeRate * r.closeRate, 0);
+    const numerator = n * sumXY - sumX * sumY;
+    const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+    if (denominator !== 0) {
+      correlationR = Math.round((numerator / denominator) * 1000) / 1000;
+    }
+  }
+
+  // Week-over-week coverage comparison
+  const thisWeekStart = new Date(now.getTime() - now.getDay() * 24 * 3600 * 1000).toISOString().split('T')[0];
+  const lastWeekStart = new Date(now.getTime() - (now.getDay() + 7) * 24 * 3600 * 1000).toISOString().split('T')[0];
+  const lastWeekEnd = new Date(now.getTime() - (now.getDay() + 1) * 24 * 3600 * 1000).toISOString().split('T')[0];
+
+  const weekOverWeek: { thisWeek: number; lastWeek: number; change: number; trend: 'up' | 'down' | 'flat' } = {
+    thisWeek: 0, lastWeek: 0, change: 0, trend: 'flat',
+  };
+
+  const thisWeekRecords = parsed.filter(r => r.record_date >= thisWeekStart);
+  const lastWeekRecords = parsed.filter(r => r.record_date >= lastWeekStart && r.record_date <= lastWeekEnd);
+
+  if (thisWeekRecords.length > 0 || lastWeekRecords.length > 0) {
+    const calcAvgCoverage = (recs: any[]) => {
+      const repDims: Record<string, Set<string>> = {};
+      for (const r of recs) {
+        if (!repDims[r.sales_name]) repDims[r.sales_name] = new Set();
+        for (const e of r.sales_explained) {
+          const dim = DIMENSION_MAP[e];
+          if (dim) repDims[r.sales_name].add(dim);
+        }
+      }
+      const rates = Object.values(repDims).map(d => d.size / STANDARD_DIMENSIONS.length);
+      return rates.length > 0 ? Math.round((rates.reduce((s, v) => s + v, 0) / rates.length) * 100) : 0;
+    };
+    weekOverWeek.thisWeek = calcAvgCoverage(thisWeekRecords);
+    weekOverWeek.lastWeek = calcAvgCoverage(lastWeekRecords);
+    weekOverWeek.change = weekOverWeek.thisWeek - weekOverWeek.lastWeek;
+    weekOverWeek.trend = weekOverWeek.change > 0 ? 'up' : weekOverWeek.change < 0 ? 'down' : 'flat';
+  }
+
   return NextResponse.json({
     records: parsed,
     concernFreq,
@@ -155,6 +293,15 @@ export async function GET() {
     weaknessByCategory,
     perModelPerRep,
     interestLevelBreakdown,
+    // New SOP metrics
+    coverageRates,
+    coverageDetail,
+    rep30DayTrend,
+    correlationR,
+    stdDeviation,
+    meanCloseRate: Math.round(meanCloseRate),
+    weekOverWeek,
+    standardDimensions: STANDARD_DIMENSIONS,
   });
 }
 

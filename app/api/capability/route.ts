@@ -12,7 +12,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(row || null);
   }
 
-  const rows = db.prepare('SELECT * FROM capability_records ORDER BY record_date DESC').all();
+  // 筛选参数
+  const sales_name = searchParams.get('sales_name');
+  const model = searchParams.get('model');
+  const result = searchParams.get('result');        // 成交 | 未成交
+  const weakness = searchParams.get('weakness');    // 薄弱点分类
+  const storeId = searchParams.get('store_id');
+
+  const where: string[] = [];
+  const params: any[] = [];
+
+  if (sales_name) { where.push('sales_name = ?'); params.push(sales_name); }
+  if (model) { where.push('model = ?'); params.push(model); }
+  if (result) { where.push('price_negotiation_result = ?'); params.push(result); }
+  if (weakness) { where.push('weakness_category = ?'); params.push(weakness); }
+  if (storeId) { where.push('store_id = ?'); params.push(storeId); }
+
+  const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
+
+  const rows = db.prepare(`SELECT * FROM capability_records ${whereClause} ORDER BY record_date DESC`).all(...params);
   return NextResponse.json({ data: rows, total: rows.length });
 }
 
@@ -107,9 +125,15 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
-  if (!id) return NextResponse.json({ error: '缺少 id' }, { status: 400 });
 
   const db = await getDb();
-  db.prepare('DELETE FROM capability_records WHERE id = ?').run(parseInt(id));
-  return NextResponse.json({ message: '删除成功' });
+  if (id) {
+    db.prepare('DELETE FROM capability_records WHERE id = ?').run(parseInt(id));
+    return NextResponse.json({ message: '记录已删除' });
+  }
+
+  // 清空全部
+  const count = db.prepare('SELECT COUNT(*) as c FROM capability_records').get() as any;
+  db.prepare('DELETE FROM capability_records').run();
+  return NextResponse.json({ message: `已清空 ${count.c} 条能力记录` });
 }

@@ -185,6 +185,7 @@ function initSchema(wrapper: DbWrapper) {
     CREATE TABLE IF NOT EXISTS stores (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
+      store_code TEXT DEFAULT '',
       address TEXT,
       region TEXT NOT NULL,
       city TEXT,
@@ -212,6 +213,41 @@ function initSchema(wrapper: DbWrapper) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
       sort_order INTEGER DEFAULT 0
+    )
+  `);
+
+  // New: standard explanation points per model (for coverage rate calc)
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS standard_explanation_points (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      model_id INTEGER REFERENCES models(id),
+      point TEXT NOT NULL,
+      category TEXT NOT NULL,
+      required INTEGER DEFAULT 1
+    )
+  `);
+
+  // New: problem type dictionary (SOP §4.2)
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS problem_types (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      sort_order INTEGER DEFAULT 0
+    )
+  `);
+
+  // New: problem submissions (SOP §2.3)
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS problem_submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sales_name TEXT NOT NULL,
+      problem_type TEXT NOT NULL,
+      urgency TEXT DEFAULT '普通',
+      description TEXT NOT NULL,
+      status TEXT DEFAULT '待处理',
+      resolution TEXT DEFAULT '',
+      submitted_at TEXT DEFAULT (datetime('now')),
+      resolved_at TEXT
     )
   `);
 
@@ -256,6 +292,26 @@ function initSchema(wrapper: DbWrapper) {
   ensureColumn(wrapper, 'sales', 'repurchase_potential', "TEXT DEFAULT ''");
   ensureColumn(wrapper, 'sales', 'customer_price_range', "TEXT DEFAULT ''");
 
+  // Real retail report columns (v2.2)
+  ensureColumn(wrapper, 'sales', 'order_no', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'store_code', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'customer_name', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'function_category', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'product_positioning', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'region_code', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'sub_region', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'channel_level1', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'channel_level2', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'channel_level3', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'reporter_name', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'customer_source', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'order_type', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'document_status', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'report_platform', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'data_source', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'agent_name', "TEXT DEFAULT ''");
+  ensureColumn(wrapper, 'sales', 'customer_relation_agent', "TEXT DEFAULT ''");
+
   // Migrate: add new columns to capability_records
   ensureColumn(wrapper, 'capability_records', 'store_id', 'INTEGER REFERENCES stores(id)');
   ensureColumn(wrapper, 'capability_records', 'region', "TEXT DEFAULT ''");
@@ -263,6 +319,69 @@ function initSchema(wrapper: DbWrapper) {
   ensureColumn(wrapper, 'capability_records', 'model_explanation_duration', 'INTEGER DEFAULT 0');
   ensureColumn(wrapper, 'capability_records', 'customer_interest_level', "TEXT DEFAULT '中'");
   ensureColumn(wrapper, 'capability_records', 'weakness_category', "TEXT DEFAULT ''");
+
+  // Store migration (v2.2)
+  ensureColumn(wrapper, 'stores', 'store_code', "TEXT DEFAULT ''");
+
+  // v2.3: 渠道替换区域
+  ensureColumn(wrapper, 'stores', 'channel', "TEXT DEFAULT ''");
+
+  // ── v2.2 新增表：考试演练结果（维度二） ──
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS exam_results (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sales_name TEXT NOT NULL,
+      account TEXT DEFAULT '',
+      position TEXT DEFAULT '',
+      exam_result TEXT DEFAULT '',
+      score REAL DEFAULT 0,
+      max_score REAL DEFAULT 100,
+      attempt_number INTEGER DEFAULT 1,
+      exam_duration TEXT DEFAULT '',
+      start_time TEXT DEFAULT '',
+      dim_size_recommend REAL DEFAULT 0,
+      dim_explosive_advantages REAL DEFAULT 0,
+      dim_sbar_demo REAL DEFAULT 0,
+      dim_rgb_mini_led REAL DEFAULT 0,
+      dim_screen_crush REAL DEFAULT 0,
+      dim_params_crush REAL DEFAULT 0,
+      dim_color_crush REAL DEFAULT 0,
+      org_path TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // ── v2.2 新增表：门店绩效（店效） ──
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS store_performance (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER UNIQUE REFERENCES stores(id),
+      period TEXT DEFAULT '',
+      our_total_sales REAL DEFAULT 0,
+      our_total_quantity INTEGER DEFAULT 0,
+      structural_model_count INTEGER DEFAULT 0,
+      category_total_count INTEGER DEFAULT 0,
+      store_efficiency_score REAL DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // ── v2.2 新增表：友商竞品销量（字段式多行添加） ──
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS competitor_sales (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      store_id INTEGER REFERENCES stores(id),
+      competitor_name TEXT NOT NULL,
+      competitor_brand TEXT DEFAULT '',
+      model_name TEXT DEFAULT '',
+      sales_amount REAL DEFAULT 0,
+      sales_quantity INTEGER DEFAULT 0,
+      period TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
 
   wrapper.saveToDisk();
 }
@@ -274,16 +393,16 @@ function seedStores(wrapper: DbWrapper) {
   if (cnt > 0) return;
 
   const insert = wrapper.prepare(`
-    INSERT INTO stores (name, address, region, city, store_type, manager)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO stores (name, store_code, address, region, city, store_type, manager, channel)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const stores = [
-    ['深圳华强北旗舰店', '深圳市福田区华强北路1001号', '华南', '深圳', '直营', '陈经理'],
-    ['广州天河城专柜', '广州市天河区天河路208号', '华南', '广州', '商场专柜', '李经理'],
-    ['上海南京路体验店', '上海市黄浦区南京东路300号', '华东', '上海', '直营', '王经理'],
-    ['北京朝阳大悦城店', '北京市朝阳区朝阳北路101号', '华北', '北京', '商场专柜', '赵经理'],
-    ['成都春熙路加盟店', '成都市锦江区春熙路88号', '西南', '成都', '加盟', null],
+    ['深圳华强北旗舰店', '', '深圳市福田区华强北路1001号', '华南', '深圳', '直营', '康希凌', 'KA渠道'],
+    ['广州天河城专柜', '', '广州市天河区天河路208号', '华南', '广州', '商场专柜', '黄家珍', 'KA渠道'],
+    ['上海南京路体验店', '', '上海市黄浦区南京东路300号', '华东', '上海', '直营', '张三', 'KA渠道'],
+    ['北京朝阳大悦城店', '', '北京市朝阳区朝阳北路101号', '华北', '北京', '商场专柜', '李四', '传统渠道'],
+    ['成都春熙路加盟店', '', '成都市锦江区春熙路88号', '西南', '成都', '加盟', null, '传统渠道'],
   ];
 
   for (const s of stores) insert.run(...s);
@@ -332,36 +451,37 @@ function seedSales(wrapper: DbWrapper) {
   if (cnt > 0) return;
 
   const insert = wrapper.prepare(`
-    INSERT INTO sales (sale_date, sales_name, model, store_id, quantity, unit_price, amount, product_line, specs, color, customer_address, purchase_preference, repurchase_potential, customer_price_range)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO sales (sale_date, sales_name, model, store_id, quantity, unit_price, amount, product_line, specs, color, customer_address, purchase_preference, repurchase_potential, customer_price_range, order_no, store_code, customer_name, function_category, product_positioning, region_code, sub_region, channel_level1, channel_level2, channel_level3, reporter_name, customer_source, order_type, document_status, report_platform, data_source, agent_name, customer_relation_agent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  const empty18 = ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
   const sales = [
     // Store 1: 深圳华强北旗舰店 (华南)
-    ['2026-05-03', '康希凌', '75Z11L', 1, 1, 10999, 10999, 'TCL_智屏产品线', '75吋', '枪色', '深圳·南山·科技园', '对性价比敏感，多次对比竞品', '中', '1万-1.5万'],
-    ['2026-05-07', '康希凌', '75X11L', 1, 1, 19999, 19999, 'TCL_智屏产品线', '75吋', '摩卡色', '深圳·福田·香蜜湖', '追求品质，认可旗舰定位', '高', '1.5万-2.5万'],
-    ['2026-05-12', '黄家珍', '85T7L', 1, 2, 12999, 25998, 'TCL_智屏产品线', '85吋', '黑色', '深圳·宝安·西乡', '家庭用户，需求大屏', '中', '1万-1.5万'],
-    ['2026-05-20', '张三', '98Q10L', 1, 1, 39999, 39999, 'TCL_智屏产品线', '98吋', '灰色', '深圳·南山·前海', '高端客户，注重品牌和体验', '高', '3万以上'],
+    ['2026-05-03', '康希凌', '75Z11L', 1, 1, 10999, 10999, 'TCL_智屏产品线', '75吋', '枪色', '深圳·南山·科技园', '对性价比敏感，多次对比竞品', '中', '1万-1.5万', ...empty18],
+    ['2026-05-07', '康希凌', '75X11L', 1, 1, 19999, 19999, 'TCL_智屏产品线', '75吋', '摩卡色', '深圳·福田·香蜜湖', '追求品质，认可旗舰定位', '高', '1.5万-2.5万', ...empty18],
+    ['2026-05-12', '黄家珍', '85T7L', 1, 2, 12999, 25998, 'TCL_智屏产品线', '85吋', '黑色', '深圳·宝安·西乡', '家庭用户，需求大屏', '中', '1万-1.5万', ...empty18],
+    ['2026-05-20', '张三', '98Q10L', 1, 1, 39999, 39999, 'TCL_智屏产品线', '98吋', '灰色', '深圳·南山·前海', '高端客户，注重品牌和体验', '高', '3万以上', ...empty18],
     // Store 2: 广州天河城专柜 (华南)
-    ['2026-05-15', '黄家珍', '75Z11L', 2, 1, 10999, 10999, 'TCL_智屏产品线', '75吋', '枪色', '广州·天河·体育中心', '初次购机，预算有限', '低', '1万以下'],
-    ['2026-06-10', '黄家珍', '85T7L', 2, 1, 12999, 12999, 'TCL_智屏产品线', '85吋', '黑色', '广州·越秀·北京路', '老客户介绍，信任度高', '高', '1万-1.5万'],
-    ['2026-06-18', '张三', '98Q10L', 2, 1, 39999, 39999, 'TCL_智屏产品线', '98吋', '灰色', '广州·天河·珠江新城', '新居装修，追求旗舰体验', '高', '3万以上'],
+    ['2026-05-15', '黄家珍', '75Z11L', 2, 1, 10999, 10999, 'TCL_智屏产品线', '75吋', '枪色', '广州·天河·体育中心', '初次购机，预算有限', '低', '1万以下', ...empty18],
+    ['2026-06-10', '黄家珍', '85T7L', 2, 1, 12999, 12999, 'TCL_智屏产品线', '85吋', '黑色', '广州·越秀·北京路', '老客户介绍，信任度高', '高', '1万-1.5万', ...empty18],
+    ['2026-06-18', '张三', '98Q10L', 2, 1, 39999, 39999, 'TCL_智屏产品线', '98吋', '灰色', '广州·天河·珠江新城', '新居装修，追求旗舰体验', '高', '3万以上', ...empty18],
     // Store 3: 上海南京路体验店 (华东)
-    ['2026-06-01', '康希凌', '75X11L', 3, 2, 19999, 39998, 'TCL_智屏产品线', '75吋', '摩卡色', '上海·浦东·陆家嘴', '品质导向，对比索尼', '中', '1.5万-2.5万'],
-    ['2026-06-05', '康希凌', '75Z11L', 3, 1, 10999, 10999, 'TCL_智屏产品线', '75吋', '枪色', '上海·徐汇·漕河泾', '租赁房配置，实用为主', '低', '1万-1.5万'],
-    ['2026-06-19', '康希凌', '65Q10L', 3, 1, 8999, 8999, 'TCL_智屏产品线', '65吋', '银色', '上海·静安·南京西路', '单身公寓，小户型', '中', '8千-1万'],
+    ['2026-06-01', '康希凌', '75X11L', 3, 2, 19999, 39998, 'TCL_智屏产品线', '75吋', '摩卡色', '上海·浦东·陆家嘴', '品质导向，对比索尼', '中', '1.5万-2.5万', ...empty18],
+    ['2026-06-05', '康希凌', '75Z11L', 3, 1, 10999, 10999, 'TCL_智屏产品线', '75吋', '枪色', '上海·徐汇·漕河泾', '租赁房配置，实用为主', '低', '1万-1.5万', ...empty18],
+    ['2026-06-19', '康希凌', '65Q10L', 3, 1, 8999, 8999, 'TCL_智屏产品线', '65吋', '银色', '上海·静安·南京西路', '单身公寓，小户型', '中', '8千-1万', ...empty18],
     // Store 4: 北京朝阳大悦城店 (华北)
-    ['2026-06-14', '黄家珍', '75Z11L', 4, 1, 10999, 10999, 'TCL_智屏产品线', '75吋', '枪色', '北京·朝阳·望京', '理性消费者，重视参数对比', '中', '1万-1.5万'],
-    ['2026-06-20', '张三', '85T7L', 4, 1, 12999, 12999, 'TCL_智屏产品线', '85吋', '黑色', '北京·海淀·中关村', '家庭成员共用，看着舒服就行', '中', '1万-1.5万'],
+    ['2026-06-14', '黄家珍', '75Z11L', 4, 1, 10999, 10999, 'TCL_智屏产品线', '75吋', '枪色', '北京·朝阳·望京', '理性消费者，重视参数对比', '中', '1万-1.5万', ...empty18],
+    ['2026-06-20', '张三', '85T7L', 4, 1, 12999, 12999, 'TCL_智屏产品线', '85吋', '黑色', '北京·海淀·中关村', '家庭成员共用，看着舒服就行', '中', '1万-1.5万', ...empty18],
     // Store 5: 成都春熙路加盟店 (西南)
-    ['2026-06-15', '康希凌', '75X11L', 5, 1, 19999, 19999, 'TCL_智屏产品线', '75吋', '摩卡色', '成都·锦江·春熙路', '对新品牌有兴趣，愿意尝试', '中', '1.5万-2.5万'],
-    ['2026-06-17', '张三', '75Z11L', 5, 1, 10999, 10999, 'TCL_智屏产品线', '75吋', '枪色', '成都·成华·建设路', '预算明确，不轻易加价', '低', '1万-1.5万'],
+    ['2026-06-15', '康希凌', '75X11L', 5, 1, 19999, 19999, 'TCL_智屏产品线', '75吋', '摩卡色', '成都·锦江·春熙路', '对新品牌有兴趣，愿意尝试', '中', '1.5万-2.5万', ...empty18],
+    ['2026-06-17', '张三', '75Z11L', 5, 1, 10999, 10999, 'TCL_智屏产品线', '75吋', '枪色', '成都·成华·建设路', '预算明确，不轻易加价', '低', '1万-1.5万', ...empty18],
     // Extra: more cross-store records to flesh out data
-    ['2026-06-08', '黄家珍', '65Q10L', 3, 1, 8999, 8999, 'TCL_智屏产品线', '65吋', '银色', '上海·长宁·天山', '年轻人首台智屏', '中', '8千-1万'],
-    ['2026-06-12', '张三', '75X11L', 4, 1, 19999, 19999, 'TCL_智屏产品线', '75吋', '摩卡色', '北京·通州·梨园', '装修升级，比较看重画质', '高', '1.5万-2.5万'],
-    ['2026-06-16', '康希凌', '98Q10L', 5, 1, 39999, 39999, 'TCL_智屏产品线', '98吋', '灰色', '成都·武侯·桐梓林', '豪宅配置，价格不敏感', '高', '3万以上'],
-    ['2026-06-21', '黄家珍', '65Q10L', 1, 1, 8999, 8999, 'TCL_智屏产品线', '65吋', '银色', '深圳·龙华·民治', '刚需紧凑户型', '低', '8千-1万'],
-    ['2026-06-22', '康希凌', '85T7L', 2, 1, 12999, 12999, 'TCL_智屏产品线', '85吋', '黑色', '广州·海珠·江南大道', '看中大屏性价比', '中', '1万-1.5万'],
+    ['2026-06-08', '黄家珍', '65Q10L', 3, 1, 8999, 8999, 'TCL_智屏产品线', '65吋', '银色', '上海·长宁·天山', '年轻人首台智屏', '中', '8千-1万', ...empty18],
+    ['2026-06-12', '张三', '75X11L', 4, 1, 19999, 19999, 'TCL_智屏产品线', '75吋', '摩卡色', '北京·通州·梨园', '装修升级，比较看重画质', '高', '1.5万-2.5万', ...empty18],
+    ['2026-06-16', '康希凌', '98Q10L', 5, 1, 39999, 39999, 'TCL_智屏产品线', '98吋', '灰色', '成都·武侯·桐梓林', '豪宅配置，价格不敏感', '高', '3万以上', ...empty18],
+    ['2026-06-21', '黄家珍', '65Q10L', 1, 1, 8999, 8999, 'TCL_智屏产品线', '65吋', '银色', '深圳·龙华·民治', '刚需紧凑户型', '低', '8千-1万', ...empty18],
+    ['2026-06-22', '康希凌', '85T7L', 2, 1, 12999, 12999, 'TCL_智屏产品线', '85吋', '黑色', '广州·海珠·江南大道', '看中大屏性价比', '中', '1万-1.5万', ...empty18],
   ];
 
   for (const s of sales) insert.run(...s);
@@ -447,12 +567,162 @@ function seedCapability(wrapper: DbWrapper) {
   for (const c of caps) insert.run(...c);
 }
 
+function seedStandardExplanationPoints(wrapper: DbWrapper) {
+  const cnt = (wrapper.prepare('SELECT COUNT(*) as c FROM standard_explanation_points').get() as any).c;
+  if (cnt > 0) return;
+
+  // Each model has 4-6 standard explanation points across 6 dimensions
+  const modelPoints: Record<string, string[]> = {
+    '75Z11L':  ['品牌历史与技术实力', 'SQD画质技术演示', '同价位竞品对比', '售后政策与服务网点', '价格构成与促销优惠', '尺寸/安装适配建议'],
+    '75X11L': ['旗舰系列定位', 'SQD+分区背光技术', '索尼/三星竞品对比', '安装服务与延保', '品质溢价论证', '回音壁生态联动'],
+    '85T7L':  ['巨幕品类的优势', '大屏观看距离说明', '与75吋/98吋的定位区隔', '家庭场景演示', '价格谈判策略', '售后安装一站式'],
+    '98Q10L': ['旗舰身份象征', '98吋独有技术参数', '高端客户心理把握', '定制化安装方案', '竞品绝对优势分析', '长期客户维护'],
+    '65Q10L': ['小户型适配方案', '高端技术下沉卖点', '年轻客群沟通策略', '与55/75吋差价逻辑', '首次购机信任建立', '售后保障打消顾虑'],
+  };
+
+  const insert = wrapper.prepare(`
+    INSERT INTO standard_explanation_points (model_id, point, category, required)
+    VALUES (?, ?, ?, ?)
+  `);
+
+  const allModels = wrapper.prepare('SELECT id, name FROM models').all() as any[];
+  for (const m of allModels) {
+    const points = modelPoints[m.name] || [];
+    for (let i = 0; i < points.length; i++) {
+      const catIdx = i < 2 ? '核心' : i < 4 ? '进阶' : '高阶';
+      insert.run(m.id, points[i], catIdx, 1);
+    }
+  }
+  wrapper.saveToDisk();
+}
+
+function seedProblemTypes(wrapper: DbWrapper) {
+  const cnt = (wrapper.prepare('SELECT COUNT(*) as c FROM problem_types').get() as any).c;
+  if (cnt > 0) return;
+
+  const insert = wrapper.prepare('INSERT INTO problem_types (name, sort_order) VALUES (?, ?)');
+  const types = [
+    ['产品知识不足', 1],
+    ['话术技巧欠缺', 2],
+    ['竞品不知如何应对', 3],
+    ['顾客异常反馈', 4],
+    ['其他', 5],
+  ];
+  for (const t of types) insert.run(...t);
+  wrapper.saveToDisk();
+}
+
+function seedProblemSubmissions(wrapper: DbWrapper) {
+  const cnt = (wrapper.prepare('SELECT COUNT(*) as c FROM problem_submissions').get() as any).c;
+  if (cnt > 0) return;
+
+  const insert = wrapper.prepare(`
+    INSERT INTO problem_submissions (sales_name, problem_type, urgency, description, status, resolution, submitted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const problems = [
+    ['黄家珍', '竞品不知如何应对', '紧急', '顾客拿海信75E5N对比，说海信便宜1000块还送音响，不知道怎么回应。', '待处理', '', '2026-06-18 14:30:00'],
+    ['张三', '产品知识不足', '紧急', '顾客问Mini LED和普通LED区别在哪，我讲不清楚技术原理，顾客觉得我不专业。', '处理中', '已安排技术培训课件', '2026-06-19 10:15:00'],
+    ['康希凌', '话术技巧欠缺', '普通', '每次讲保修政策顾客都不耐烦，怎么把售后变成卖点来讲？', '已回复', '建议放在演示环节之后讲售后，用"买得放心"来包装', '2026-06-15 16:00:00'],
+    ['黄家珍', '产品知识不足', '普通', '刚上85T7L，对分区背光数和竞品参数还不熟，需要产品参数速查表。', '待处理', '', '2026-06-20 09:45:00'],
+    ['张三', '顾客异常反馈', '紧急', '前天卖的75Z11L顾客打电话说屏幕有漏光，情绪激动要求退货，该怎么处理？', '处理中', '已联系售后上门检测，待反馈结果', '2026-06-21 11:00:00'],
+  ];
+
+  for (const p of problems) insert.run(...p);
+  wrapper.saveToDisk();
+}
+
+function seedExamResults(wrapper: DbWrapper) {
+  const cnt = (wrapper.prepare('SELECT COUNT(*) as c FROM exam_results').get() as any).c;
+  if (cnt > 0) return;
+
+  const xlsxPath = path.join(process.cwd(), '数据库', '【智屏】六月第三周·智屏强化实战演练_演练结果_20260622.xlsx (1).xlsx');
+  if (!fs.existsSync(xlsxPath)) {
+    console.log('[DB] 考试演练 Excel 未找到，跳过种子数据');
+    return;
+  }
+
+  try {
+    const XLSX = require('xlsx');
+    const buffer = fs.readFileSync(xlsxPath);
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets['演练明细'];
+    if (!sheet) {
+      console.log('[DB] 演练明细 sheet 未找到');
+      return;
+    }
+
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+    if (rows.length < 2) return;
+
+    const headers = rows[0].map((h: any) => String(h || '').trim());
+
+    const insert = wrapper.prepare(`
+      INSERT INTO exam_results (
+        sales_name, account, position, exam_result, score, max_score, attempt_number,
+        exam_duration, start_time,
+        dim_size_recommend, dim_explosive_advantages, dim_sbar_demo,
+        dim_rgb_mini_led, dim_screen_crush, dim_params_crush, dim_color_crush,
+        org_path
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    let imported = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const take = (idx: number, fallback = '') => String(row[idx] || '').trim();
+      const takeNum = (idx: number) => { const v = parseFloat(row[idx]); return isNaN(v) ? 0 : v; };
+
+      // Build org path from 一级组织 ~ 九级组织 (columns 13~21, 0-indexed)
+      const orgParts: string[] = [];
+      for (let j = 13; j <= 21; j++) {
+        const part = take(j);
+        if (part) orgParts.push(part);
+      }
+
+      // 演练明细 sheet 列映射 (22 列):
+      // 0:姓名 1:账号 2:演练结果 3:分数 4:开始时间 5:演练时长
+      // 6-12: 7个维度得分 13-21: 九级组织
+      insert.run(
+        take(0),                        // sales_name
+        take(1),                        // account
+        '',                             // position (演练明细无此列)
+        take(2),                        // exam_result (已通过/未通过)
+        takeNum(3),                     // score
+        100,                            // max_score
+        1,                              // attempt_number
+        take(5),                        // exam_duration
+        take(4),                        // start_time
+        takeNum(6),                     // dim_size_recommend
+        takeNum(7),                     // dim_explosive_advantages
+        takeNum(8),                     // dim_sbar_demo
+        takeNum(9),                     // dim_rgb_mini_led
+        takeNum(10),                    // dim_screen_crush
+        takeNum(11),                    // dim_params_crush
+        takeNum(12),                    // dim_color_crush
+        orgParts.join('/')              // org_path
+      );
+      imported++;
+    }
+
+    wrapper.saveToDisk();
+    console.log(`[DB] 考试演练种子数据: 导入 ${imported} 条`);
+  } catch (e: any) {
+    console.error('[DB] 考试演练种子导入失败:', e.message);
+  }
+}
+
 function seedData(wrapper: DbWrapper) {
   seedStores(wrapper);
   seedModels(wrapper);
   seedWeaknessCategories(wrapper);
+  seedStandardExplanationPoints(wrapper);
+  seedProblemTypes(wrapper);
+  seedProblemSubmissions(wrapper);
   seedSales(wrapper);
   seedCapability(wrapper);
+  seedExamResults(wrapper);
   wrapper.saveToDisk();
   console.log('[DB] 初始化数据已写入');
 }
