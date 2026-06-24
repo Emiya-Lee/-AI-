@@ -106,7 +106,7 @@ export async function GET() {
   `).all() as any[];
 
   // Batch: get regional averages for ALL models in one query
-  const models = [...new Set(pairs.map(p => p.model))];
+  const models = Array.from(new Set(pairs.map(p => p.model)));
   const regionalByModel: Record<string, { total: number; deals: number; avg_dur: number }> = {};
   if (models.length > 0) {
     const placeholders = models.map(() => '?').join(',');
