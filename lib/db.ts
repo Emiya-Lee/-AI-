@@ -326,6 +326,74 @@ function initSchema(wrapper: DbWrapper) {
   // v2.3: 渠道替换区域
   ensureColumn(wrapper, 'stores', 'channel', "TEXT DEFAULT ''");
 
+  // ── v2.3 新增表：录音合集（录音 AI 分析） ──
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS call_recordings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_name TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      sales_name TEXT DEFAULT '',
+      store_name TEXT DEFAULT '',
+      region TEXT DEFAULT '',
+      transcription TEXT DEFAULT '',
+      status TEXT DEFAULT 'pending',
+      audio_duration INTEGER DEFAULT 0,
+      explanation_coverage_rate REAL DEFAULT 0,
+      deal_rate REAL DEFAULT 0,
+      avg_interest_score REAL DEFAULT 0,
+      deal_result TEXT DEFAULT '',
+      weakness_analysis TEXT DEFAULT '',
+      ai_summary TEXT DEFAULT '',
+      scores TEXT DEFAULT '{}',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // ── v2.4 新增表：知识库（提取的高频问答和卖点） ──
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS knowledge_base (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      keyword TEXT NOT NULL,
+      keyword_type TEXT DEFAULT 'question',
+      frequency INTEGER DEFAULT 1,
+      deal_freq INTEGER DEFAULT 0,
+      no_deal_freq INTEGER DEFAULT 0,
+      region TEXT DEFAULT '',
+      source_record_ids TEXT DEFAULT '[]',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // ── v2.4 新增表：亮点与暗点分析 ──
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS insight_analysis (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      insight_type TEXT DEFAULT 'bright',
+      keyword TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      frequency INTEGER DEFAULT 0,
+      deal_frequency INTEGER DEFAULT 0,
+      no_deal_frequency INTEGER DEFAULT 0,
+      region TEXT DEFAULT '',
+      improvement TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // ── v2.4 新增表：区域基准（用于偏差校正） ──
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS region_baseline (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      region TEXT NOT NULL,
+      avg_coverage_rate REAL DEFAULT 0,
+      avg_close_rate REAL DEFAULT 0,
+      question_count INTEGER DEFAULT 0,
+      top_questions TEXT DEFAULT '[]',
+      top_interests TEXT DEFAULT '[]',
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // ── v2.2 新增表：考试演练结果（维度二） ──
   wrapper.rawDb.run(`
     CREATE TABLE IF NOT EXISTS exam_results (
@@ -383,6 +451,28 @@ function initSchema(wrapper: DbWrapper) {
     )
   `);
 
+  // ── 索引（加速常用查询） ──
+  const indexes = [
+    'CREATE INDEX IF NOT EXISTS idx_sales_sales_name ON sales(sales_name)',
+    'CREATE INDEX IF NOT EXISTS idx_sales_model ON sales(model)',
+    'CREATE INDEX IF NOT EXISTS idx_sales_sale_date ON sales(sale_date)',
+    'CREATE INDEX IF NOT EXISTS idx_sales_store_id ON sales(store_id)',
+    'CREATE INDEX IF NOT EXISTS idx_sales_region_code ON sales(region_code)',
+    'CREATE INDEX IF NOT EXISTS idx_sales_store_region ON sales(store_id, region_code)',
+    'CREATE INDEX IF NOT EXISTS idx_cap_sales_name ON capability_records(sales_name)',
+    'CREATE INDEX IF NOT EXISTS idx_cap_model ON capability_records(model)',
+    'CREATE INDEX IF NOT EXISTS idx_cap_record_date ON capability_records(record_date)',
+    'CREATE INDEX IF NOT EXISTS idx_cap_store_id ON capability_records(store_id)',
+    'CREATE INDEX IF NOT EXISTS idx_cap_result ON capability_records(price_negotiation_result)',
+    'CREATE INDEX IF NOT EXISTS idx_exam_sales_name ON exam_results(sales_name)',
+    'CREATE INDEX IF NOT EXISTS idx_call_status ON call_recordings(status)',
+    'CREATE INDEX IF NOT EXISTS idx_competitor_store ON competitor_sales(store_id)',
+    'CREATE INDEX IF NOT EXISTS idx_problem_status ON problem_submissions(status)',
+  ];
+  for (const idx of indexes) {
+    wrapper.rawDb.run(idx);
+  }
+
   wrapper.saveToDisk();
 }
 
@@ -406,7 +496,6 @@ function seedStores(wrapper: DbWrapper) {
   ];
 
   for (const s of stores) insert.run(...s);
-  wrapper.saveToDisk();
 }
 
 function seedModels(wrapper: DbWrapper) {
@@ -427,7 +516,6 @@ function seedModels(wrapper: DbWrapper) {
   ];
 
   for (const m of models) insert.run(...m);
-  wrapper.saveToDisk();
 }
 
 function seedWeaknessCategories(wrapper: DbWrapper) {
@@ -443,7 +531,6 @@ function seedWeaknessCategories(wrapper: DbWrapper) {
     ['其他', 5],
   ];
   for (const c of cats) insert.run(...c);
-  wrapper.saveToDisk();
 }
 
 function seedSales(wrapper: DbWrapper) {
@@ -593,7 +680,6 @@ function seedStandardExplanationPoints(wrapper: DbWrapper) {
       insert.run(m.id, points[i], catIdx, 1);
     }
   }
-  wrapper.saveToDisk();
 }
 
 function seedProblemTypes(wrapper: DbWrapper) {
@@ -609,7 +695,6 @@ function seedProblemTypes(wrapper: DbWrapper) {
     ['其他', 5],
   ];
   for (const t of types) insert.run(...t);
-  wrapper.saveToDisk();
 }
 
 function seedProblemSubmissions(wrapper: DbWrapper) {
@@ -630,7 +715,6 @@ function seedProblemSubmissions(wrapper: DbWrapper) {
   ];
 
   for (const p of problems) insert.run(...p);
-  wrapper.saveToDisk();
 }
 
 function seedExamResults(wrapper: DbWrapper) {
@@ -706,7 +790,6 @@ function seedExamResults(wrapper: DbWrapper) {
       imported++;
     }
 
-    wrapper.saveToDisk();
     console.log(`[DB] 考试演练种子数据: 导入 ${imported} 条`);
   } catch (e: any) {
     console.error('[DB] 考试演练种子导入失败:', e.message);

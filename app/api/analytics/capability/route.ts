@@ -90,7 +90,7 @@ export async function GET() {
 
   // ── Per-model per-rep analysis (the key new feature) ──
   // For each (rep, model) pair: deal rate, avg explanation duration, vs regional average
-  const perModelPerRep: any[] = [];
+  // Batch query: get all (model, sales_name) pairs + regional averages in 2 queries total
 
   // Get distinct (rep, model) pairs with records
   const pairs = db.prepare(`
@@ -105,30 +105,37 @@ export async function GET() {
     ORDER BY sales_name, model
   `).all() as any[];
 
-  // For each pair, compute regional average for that model
-  for (const p of pairs) {
-    const dealRate = Math.round((p.deal_count / p.total_attempts) * 100);
-
-    // Regional average for this model
-    const regional = db.prepare(`
-      SELECT COUNT(*) as total,
+  // Batch: get regional averages for ALL models in one query
+  const models = [...new Set(pairs.map(p => p.model))];
+  const regionalByModel: Record<string, { total: number; deals: number; avg_dur: number }> = {};
+  if (models.length > 0) {
+    const placeholders = models.map(() => '?').join(',');
+    const regionalRows = db.prepare(`
+      SELECT model,
+             COUNT(*) as total,
              SUM(CASE WHEN price_negotiation_result = '成交' THEN 1 ELSE 0 END) as deals,
              AVG(model_explanation_duration) as avg_dur
       FROM capability_records
-      WHERE model = ? AND sales_name != ?
-    `).get(p.model, p.sales_name) as any;
+      WHERE model IN (${placeholders})
+      GROUP BY model
+    `).all(...models) as any[];
+    for (const r of regionalRows) {
+      regionalByModel[r.model] = r;
+    }
+  }
 
+  // Build perModelPerRep using pre-fetched regional data (no N+1)
+  const perModelPerRep = pairs.map(p => {
+    const dealRate = Math.round((p.deal_count / p.total_attempts) * 100);
+    const regional = regionalByModel[p.model];
     const regionalDealRate = regional && regional.total > 0
       ? Math.round((regional.deals / regional.total) * 100)
       : 0;
     const regionalAvgDur = Math.round(regional?.avg_dur || 0);
     const gap = dealRate - regionalDealRate;
-
-    // Interest level label
     const interestScore = Math.round(p.avg_interest_score || 2);
     const avgInterest = interestScore >= 3 ? '高' : interestScore >= 2 ? '中' : '低';
-
-    perModelPerRep.push({
+    return {
       sales_name: p.sales_name,
       model: p.model,
       total_attempts: p.total_attempts,
@@ -139,8 +146,8 @@ export async function GET() {
       regional_avg_deal_rate: regionalDealRate,
       regional_avg_duration: regionalAvgDur,
       gap,
-    });
-  }
+    };
+  });
 
   // Sort by negative gap (worst performers first)
   perModelPerRep.sort((a, b) => a.gap - b.gap);
@@ -283,6 +290,32 @@ export async function GET() {
     weekOverWeek.trend = weekOverWeek.change > 0 ? 'up' : weekOverWeek.change < 0 ? 'down' : 'flat';
   }
 
+  // 获取录音分析数据（AI 评分）
+  const callRecordings: any[] = db.prepare(`
+    SELECT * FROM call_recordings WHERE status = 'analyzed' AND sales_name != ''
+  `).all();
+
+  // 按销代汇总录音分析得分
+  const recordingScoresByRep: Record<string, { coverageRate: number; dealRate: number; count: number }> = {};
+  for (const rec of callRecordings) {
+    const name = rec.sales_name;
+    if (!name) continue;
+    if (!recordingScoresByRep[name]) {
+      recordingScoresByRep[name] = { coverageRate: 0, dealRate: 0, count: 0 };
+    }
+    recordingScoresByRep[name].coverageRate += rec.explanation_coverage_rate || 0;
+    recordingScoresByRep[name].dealRate += rec.deal_rate || 0;
+    recordingScoresByRep[name].count++;
+  }
+
+  // 计算录音分析平均得分
+  const recordingAnalytics = Object.entries(recordingScoresByRep).map(([name, scores]) => ({
+    sales_name: name,
+    avgCoverageRate: scores.count > 0 ? Math.round(scores.coverageRate / scores.count) : 0,
+    avgDealRate: scores.count > 0 ? Math.round(scores.dealRate / scores.count) : 0,
+    recordingCount: scores.count,
+  }));
+
   return NextResponse.json({
     records: parsed,
     concernFreq,
@@ -302,6 +335,9 @@ export async function GET() {
     meanCloseRate: Math.round(meanCloseRate),
     weekOverWeek,
     standardDimensions: STANDARD_DIMENSIONS,
+    // 录音 AI 分析
+    recordingAnalytics,
+    totalRecordings: callRecordings.length,
   });
 }
 

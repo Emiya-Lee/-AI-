@@ -22,6 +22,25 @@ export default function CapabilityPage() {
   const [filterResult, setFilterResult] = useState('');
   const [filterWeakness, setFilterWeakness] = useState('');
 
+  // 录音分析状态
+  const [recordings, setRecordings] = useState<any[]>([]);
+  const [recordingsLoading, setRecordingsLoading] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'record' | 'capability' | 'knowledge'>('capability');
+  const [editingRecording, setEditingRecording] = useState<any>(null);
+
+  // 知识库状态
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [insights, setInsights] = useState<any[]>([]);
+  const [baselines, setBaselines] = useState<any[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [extractLoading, setExtractLoading] = useState(false);
+  const [uploadForm, setUploadForm] = useState({
+    sales_name: '',
+    region: '',
+    deal_result: ''
+  });
+
   const [form, setForm] = useState({
     sales_name: '', store_id: '', region: '', model: '',
     communication_duration: 20, model_explanation_duration: 10,
@@ -62,6 +81,150 @@ export default function CapabilityPage() {
   }, [filterSalesName, filterModel, filterResult, filterWeakness]);
 
   useEffect(() => { load(); }, [load]);
+
+  // 加载录音列表
+  const loadRecordings = useCallback(async () => {
+    setRecordingsLoading(true);
+    try {
+      const r = await fetch('/api/call-recordings');
+      const d = await r.json();
+      setRecordings(d.data || []);
+    } finally {
+      setRecordingsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadRecordings(); }, []);
+
+  // 清空全部录音记录
+  const handleClearRecordings = async () => {
+    if (!confirm('⚠️ 确认清空全部录音记录？此操作不可恢复！')) return;
+    setClearing(true);
+    try {
+      await fetch('/api/call-recordings', { method: 'DELETE' });
+      loadRecordings();
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  // 扫描新录音
+  const scanRecordings = async () => {
+    const r = await fetch('/api/call-recordings', { method: 'PATCH' });
+    const d = await r.json();
+    if (d.data && d.data.length > 0) {
+      for (const f of d.data) {
+        await fetch('/api/call-recordings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_name: f.name, file_path: f.path }),
+        });
+      }
+    }
+    loadRecordings();
+  };
+
+  // 转写录音
+  const handleTranscribe = async () => {
+    setTranscribing(true);
+    try {
+      await fetch('/api/call-recordings/transcribe', { method: 'POST' });
+      loadRecordings();
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  // 更新录音关联的销代
+  const updateRecordingSalesName = async (id: number, sales_name: string) => {
+    await fetch(`/api/call-recordings?id=${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sales_name }),
+    });
+    loadRecordings();
+  };
+
+  // 删除录音记录
+  const handleDeleteRecording = async (id: number) => {
+    if (!confirm('确认删除该录音记录？')) return;
+    await fetch(`/api/call-recordings?id=${id}`, { method: 'DELETE' });
+    loadRecordings();
+  };
+
+  // 上传文件
+  const handleUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const fileInput = document.getElementById('file-upload') as HTMLInputElement;
+    if (!fileInput?.files?.[0]) {
+      alert('请选择文件');
+      return;
+    }
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('sales_name', uploadForm.sales_name);
+      formData.append('region', uploadForm.region);
+      formData.append('deal_result', uploadForm.deal_result);
+
+      const r = await fetch('/api/call-recordings', { method: 'PUT', body: formData });
+      if (!r.ok) throw new Error('上传失败');
+      alert('上传成功');
+      setUploadForm({ sales_name: '', region: '', deal_result: '' });
+      fileInput.value = '';
+      loadRecordings();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // 加载知识库
+  const loadKnowledge = useCallback(async () => {
+    try {
+      const [qRes, iRes, bRes] = await Promise.all([
+        fetch('/api/knowledge?type=questions'),
+        fetch('/api/knowledge?type=insights'),
+        fetch('/api/knowledge?type=baselines'),
+      ]);
+      const q = await qRes.json();
+      const i = await iRes.json();
+      const b = await bRes.json();
+      setQuestions(q.data || []);
+      setInsights(i.data || []);
+      setBaselines(b.data || []);
+    } catch (e) {
+      console.error('Failed to load knowledge', e);
+    }
+  }, []);
+
+  // 提取知识库
+  const handleExtractKnowledge = async () => {
+    setExtractLoading(true);
+    try {
+      const r = await fetch('/api/knowledge', { method: 'POST' });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      alert(d.message || '知识库提取完成');
+      loadKnowledge();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setExtractLoading(false);
+    }
+  };
+
+  // 更新录音的成交结果
+  const updateRecordingDealResult = async (id: number, deal_result: string) => {
+    await fetch(`/api/call-recordings?id=${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deal_result }),
+    });
+    loadRecordings();
+  };
 
   const toggleArr = (field: 'customer_concerns' | 'sales_explained', val: string) => {
     setForm(f => {
@@ -132,11 +295,277 @@ export default function CapabilityPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">🎯 能力缺陷记录</h1>
-        <p className="text-text-secondary text-sm mt-1">记录销售沟通细节，诊断机型级讲解能力短板</p>
+        <h1 className="text-2xl font-bold">🎯 能力诊断</h1>
+        <p className="text-text-secondary text-sm mt-1">记录销代表现 + 录音 AI 分析</p>
       </div>
 
-      {/* Enhanced form */}
+      {/* Tab Switch */}
+      <div className="flex gap-2 border-b border-border">
+        <button onClick={() => setActiveTab('capability')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition ${activeTab === 'capability' ? 'border-primary text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
+          📋 能力记录
+        </button>
+        <button onClick={() => setActiveTab('record')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition ${activeTab === 'record' ? 'border-primary text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
+          🎙️ 录音分析
+        </button>
+        <button onClick={() => { setActiveTab('knowledge'); loadKnowledge(); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition ${activeTab === 'knowledge' ? 'border-primary text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
+          📚 资料库
+        </button>
+      </div>
+
+      {/* 录音分析面板 */}
+      {activeTab === 'record' && (
+        <div className="space-y-4">
+          {/* 文件上传 */}
+          <div className="bg-surface border border-border rounded-xl p-5">
+            <h2 className="text-base font-semibold mb-4">📤 上传录音/文档</h2>
+            <form onSubmit={handleUpload} className="flex flex-wrap gap-3 items-end">
+              <div className="flex-1 min-w-[200px]">
+                <input type="file" id="file-upload" accept=".m4a,.mp3,.wav,.m4r,.docx" className="w-full text-sm text-text-secondary file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:bg-primary/10 file:text-primary hover:file:bg-primary/20" />
+              </div>
+              <div className="w-32">
+                <select className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
+                  value={uploadForm.sales_name} onChange={e => setUploadForm(f => ({ ...f, sales_name: e.target.value }))}>
+                  <option value="">销代姓名</option>
+                  {SALES_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="w-32">
+                <input type="text" className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
+                  placeholder="区域" value={uploadForm.region} onChange={e => setUploadForm(f => ({ ...f, region: e.target.value }))} />
+              </div>
+              <div className="w-32">
+                <select className="w-full bg-bg border border-border rounded-lg px-3 py-2 text-sm"
+                  value={uploadForm.deal_result} onChange={e => setUploadForm(f => ({ ...f, deal_result: e.target.value }))}>
+                  <option value="">成交结果</option>
+                  <option value="成交">成交</option>
+                  <option value="未成交">未成交</option>
+                </select>
+              </div>
+              <button type="submit" disabled={uploading}
+                className="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/80 disabled:opacity-50">
+                {uploading ? '上传中...' : '📤 上传'}
+              </button>
+            </form>
+          </div>
+
+          {/* 录音列表 */}
+          <div className="bg-surface border border-border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-base font-semibold">录音合集</h2>
+                <p className="text-xs text-text-secondary mt-1">Whisper AI 转写 + 能力评分</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={scanRecordings}
+                  className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-white/5 transition">
+                  🔍 扫描录音
+                </button>
+                <button onClick={handleTranscribe} disabled={transcribing}
+                  className="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary/80 disabled:opacity-50 transition">
+                  {transcribing ? '转写中...' : '🎙️ 转写全部'}
+                </button>
+              </div>
+            </div>
+
+            {recordingsLoading ? (
+              <div className="text-center py-8 text-text-secondary">加载中...</div>
+            ) : recordings.length === 0 ? (
+              <div className="text-center py-8 text-text-secondary">
+                暂无录音记录，点击「扫描录音」导入
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {recordings.map((r: any) => (
+                  <div key={r.id} className="border border-border/50 rounded-lg p-4 hover:bg-white/5 transition">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 flex-wrap mb-2">
+                          <span className="font-medium text-sm">{r.file_name}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${/\.docx$/i.test(r.file_name) ? 'bg-purple-500/20 text-purple-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                            {/\.docx$/i.test(r.file_name) ? '📄 文档' : '🎙️ 录音'}
+                          </span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${r.status === 'analyzed' ? 'bg-accent/20 text-accent' : 'bg-warning/20 text-warning'}`}>
+                            {r.status === 'analyzed' ? '已分析' : '待处理'}
+                          </span>
+                          {r.audio_duration > 0 && (
+                            <span className="text-xs text-text-secondary">{Math.round(r.audio_duration / 60)}分钟</span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          <select value={r.sales_name} onChange={e => updateRecordingSalesName(r.id, e.target.value)}
+                            className="bg-bg border border-border text-xs rounded-lg px-2 py-1">
+                            <option value="">关联销代</option>
+                            {SALES_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                          <select value={r.deal_result} onChange={e => updateRecordingDealResult(r.id, e.target.value)}
+                            className={`bg-bg border text-xs rounded-lg px-2 py-1 ${r.deal_result === '成交' ? 'border-accent text-accent' : r.deal_result === '未成交' ? 'border-danger text-danger' : 'border-border'}`}>
+                            <option value="">成交结果</option>
+                            <option value="成交">成交</option>
+                            <option value="未成交">未成交</option>
+                          </select>
+                          {r.region && <span className="text-xs text-text-secondary">{r.region}</span>}
+                          {r.store_name && <span className="text-xs text-text-secondary">门店: {r.store_name}</span>}
+                        </div>
+
+                        {r.status === 'analyzed' && (
+                          <div className="grid grid-cols-3 gap-3 text-xs">
+                            <div className="bg-bg/50 rounded-lg p-2">
+                              <div className="text-text-secondary">讲解覆盖率</div>
+                              <div className="text-lg font-mono font-bold text-primary">{r.explanation_coverage_rate}%</div>
+                            </div>
+                            <div className="bg-bg/50 rounded-lg p-2">
+                              <div className="text-text-secondary">成交意向</div>
+                              <div className="text-lg font-mono font-bold text-accent">{r.deal_rate}%</div>
+                            </div>
+                            <div className="bg-bg/50 rounded-lg p-2">
+                              <div className="text-text-secondary">兴趣指数</div>
+                              <div className="text-lg font-mono font-bold text-warning">{r.avg_interest_score || 50}</div>
+                            </div>
+                          </div>
+                        )}
+
+                        {r.transcription && (
+                          <details className="mt-2">
+                            <summary className="text-xs text-text-secondary cursor-pointer hover:text-text-primary">
+                              查看转写文本 ({r.transcription.length} 字)
+                            </summary>
+                            <p className="mt-2 text-xs text-text-secondary bg-bg/50 rounded p-2 max-h-32 overflow-y-auto">
+                              {r.transcription.slice(0, 500)}{r.transcription.length > 500 ? '...' : ''}
+                            </p>
+                          </details>
+                        )}
+
+                        {r.ai_summary && (
+                          <p className="mt-2 text-xs text-text-secondary italic">
+                            💡 {r.ai_summary}
+                          </p>
+                        )}
+                      </div>
+                      <button onClick={() => handleDeleteRecording(r.id)} className="text-danger/60 hover:text-danger text-xs ml-2">删除</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 资料库面板 */}
+      {activeTab === 'knowledge' && (
+        <div className="space-y-4">
+          <div className="bg-surface border border-border rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-base font-semibold">📚 知识库</h2>
+                <p className="text-xs text-text-secondary mt-1">从录音中提取高频问题和卖点，分析亮点与暗点</p>
+              </div>
+              <button onClick={handleExtractKnowledge} disabled={extractLoading}
+                className="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/80 disabled:opacity-50">
+                {extractLoading ? '分析中...' : '🔄 重新提取'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* 常见问题 */}
+              <div className="border border-border/50 rounded-lg p-4">
+                <h3 className="text-sm font-medium mb-3 text-text-secondary">❓ 顾客常问问题</h3>
+                {questions.length === 0 ? (
+                  <p className="text-xs text-text-secondary">暂无数据</p>
+                ) : (
+                  <div className="space-y-2">
+                    {questions.slice(0, 10).map((q: any) => (
+                      <div key={q.id} className="flex items-center justify-between text-xs">
+                        <span>{q.keyword}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-text-secondary">出现 {q.frequency} 次</span>
+                          <span className={`px-1.5 py-0.5 rounded ${q.deal_freq > q.no_deal_freq ? 'bg-accent/20 text-accent' : 'bg-danger/20 text-danger'}`}>
+                            成交 {q.deal_freq}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 亮点 */}
+              <div className="border border-accent/30 rounded-lg p-4 bg-accent/5">
+                <h3 className="text-sm font-medium mb-3 text-accent">✨ 亮点</h3>
+                {insights.filter((i: any) => i.insight_type === 'bright').length === 0 ? (
+                  <p className="text-xs text-text-secondary">暂无数据</p>
+                ) : (
+                  <div className="space-y-2">
+                    {insights.filter((i: any) => i.insight_type === 'bright').slice(0, 5).map((i: any) => (
+                      <div key={i.id} className="text-xs">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium">{i.keyword}</span>
+                          <span className="text-accent">{i.deal_frequency}次成交</span>
+                        </div>
+                        <p className="text-text-secondary">{i.improvement}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 暗点 */}
+              <div className="border border-danger/30 rounded-lg p-4 bg-danger/5">
+                <h3 className="text-sm font-medium mb-3 text-danger">⚠️ 暗点</h3>
+                {insights.filter((i: any) => i.insight_type === 'dark').length === 0 ? (
+                  <p className="text-xs text-text-secondary">暂无数据</p>
+                ) : (
+                  <div className="space-y-2">
+                    {insights.filter((i: any) => i.insight_type === 'dark').slice(0, 5).map((i: any) => (
+                      <div key={i.id} className="text-xs">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium">{i.keyword}</span>
+                          <span className="text-danger">{i.no_deal_frequency}次未成交</span>
+                        </div>
+                        <p className="text-text-secondary">{i.improvement}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 区域基准 */}
+          {baselines.length > 0 && (
+            <div className="bg-surface border border-border rounded-xl p-5">
+              <h3 className="text-sm font-medium mb-3 text-text-secondary">📊 区域对比（偏差校正基准）</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {baselines.map((b: any) => (
+                  <div key={b.id} className="border border-border/50 rounded-lg p-3">
+                    <div className="text-sm font-medium mb-2">{b.region}</div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <div className="text-text-secondary">覆盖率</div>
+                        <div className="font-mono text-primary">{b.avg_coverage_rate}%</div>
+                      </div>
+                      <div>
+                        <div className="text-text-secondary">成交率</div>
+                        <div className="font-mono text-accent">{b.avg_close_rate}%</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-xs text-text-secondary">
+                      问题数: {b.question_count}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 能力记录表单 - 仅在 tab=capability 时显示 */}
+      {activeTab === 'capability' && (
       <div className="bg-surface border border-border rounded-xl p-5">
         <h2 className="text-base font-semibold mb-4">📝 新增记录</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -276,8 +705,11 @@ export default function CapabilityPage() {
           </button>
         </form>
       </div>
+      )}
 
-      {/* Analytics charts */}
+      {/* Analytics charts - 仅在能力记录 tab 显示 */}
+      {activeTab === 'capability' && (
+      <>
       {loading ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {[...Array(4)].map((_, i) => <div key={i} className="bg-surface border border-border rounded-xl animate-pulse h-48" />)}
@@ -435,6 +867,8 @@ export default function CapabilityPage() {
           {records.length === 0 && <div className="text-center text-text-secondary py-8">暂无记录</div>}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

@@ -160,7 +160,6 @@ export async function POST(req: NextRequest) {
       SELECT id FROM sales WHERE order_no = ? AND sale_date = ? AND sales_name = ? AND model = ? AND amount = ? LIMIT 1
     `);
 
-    const rows = rawData;
     const insertMany = db.transaction((allRows: any[][]) => {
       for (let i = 1; i < allRows.length; i++) {
         const row = allRows[i];
