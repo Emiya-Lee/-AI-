@@ -4,3 +4,5 @@ data/
 数据库/
 *.png
 *.jpg
+.env.local
+.env
