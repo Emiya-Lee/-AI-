@@ -28,41 +28,59 @@ export interface LLMClient {
   analyze(ctx: AnalysisContext): Promise<AnalysisResult>;
 }
 
-// Lazy-load provider implementations to avoid import errors when not needed
+// Lazy-load provider implementations
 let _factory: typeof import('./llm-providers') | null = null;
-async function getFactory() {
+let _cachedProvider: LLMClient | null = null;
+let _cachedProviderType: string = '';
+
+// ── Config (reads from DB) ──────────────────────────────────────
+
+async function getConfigFromDb() {
+  // Avoid circular import by lazy loading
+  const { getDb } = await import('./db');
+  const db = await getDb();
+  return db.getAllConfig();
+}
+
+function getEnv(key: string, fallback: string): string {
+  return process.env[key] || fallback;
+}
+
+// ── Provider getter ─────────────────────────────────────────────
+
+export async function getLLMProvider(): Promise<LLMClient> {
+  const config = await getConfigFromDb();
+
+  const providerType = (
+    config.llm_provider ||
+    getEnv('LLM_PROVIDER', 'mock')
+  ) as LLMProviderType;
+
+  // Cache per process lifetime, but re-create if provider type changed
+  if (_cachedProvider && _cachedProviderType === providerType) {
+    return _cachedProvider;
+  }
+
   if (!_factory) {
     _factory = await import('./llm-providers');
   }
-  return _factory;
-}
 
-let _cachedProvider: LLMClient | null = null;
-
-/**
- * Get the configured LLM provider based on LLM_PROVIDER env var.
- * Caches the result for the lifetime of the process.
- */
-export async function getLLMProvider(): Promise<LLMClient> {
-  if (_cachedProvider) return _cachedProvider;
-
-  const providerType = (process.env.LLM_PROVIDER || 'mock') as LLMProviderType;
-  const factory = await getFactory();
-
-  _cachedProvider = factory.createProvider(providerType);
+  _cachedProviderType = providerType;
+  _cachedProvider = _factory.createProvider(providerType, config);
   return _cachedProvider;
 }
 
-/**
- * Check if LLM analysis is enabled via env var.
- */
-export function isLLMEnabled(): boolean {
-  return process.env.USE_LLM_ANALYSIS === 'true';
+export async function isLLMEnabled(): Promise<boolean> {
+  const config = await getConfigFromDb();
+  return config.use_llm_analysis === 'true' || getEnv('USE_LLM_ANALYSIS', 'false') === 'true';
 }
 
-/**
- * Check if fallback to rules is enabled when LLM fails.
- */
-export function shouldFallbackToRules(): boolean {
-  return process.env.LLM_FALLBACK_TO_RULES !== 'false'; // default true
+export async function shouldFallbackToRules(): Promise<boolean> {
+  const config = await getConfigFromDb();
+  return config.llm_fallback_to_rules !== 'false'; // default true
+}
+
+// Sync versions for hot paths (read env directly to avoid async)
+export function isLLMEnabledSync(): boolean {
+  return getEnv('USE_LLM_ANALYSIS', 'false') === 'true';
 }

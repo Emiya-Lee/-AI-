@@ -134,6 +134,21 @@ class DbWrapper {
   get rawDb(): SqlJsDatabase {
     return this.sqlDb;
   }
+
+  // ── 系统配置读写 ──
+  getConfig(key: string): string {
+    const row = this.prepare('SELECT value FROM app_config WHERE key = ?').get(key) as any;
+    return row?.value ?? '';
+  }
+
+  setConfig(key: string, value: string): void {
+    this.prepare(`INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES (?, ?, datetime('now'))`).run(key, value);
+  }
+
+  getAllConfig(): Record<string, string> {
+    const rows = this.prepare('SELECT key, value FROM app_config').all() as any[];
+    return Object.fromEntries(rows.map(r => [r.key, r.value]));
+  }
 }
 
 // ── Init ──
@@ -471,6 +486,31 @@ function initSchema(wrapper: DbWrapper) {
   ];
   for (const idx of indexes) {
     wrapper.rawDb.run(idx);
+  }
+
+  // ── 系统配置表 ──
+  wrapper.rawDb.run(`
+    CREATE TABLE IF NOT EXISTS app_config (
+      key TEXT PRIMARY KEY,
+      value TEXT DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // 初始化默认 LLM 配置
+  const llmDefaults = [
+    ['llm_provider', 'mock'],
+    ['use_llm_analysis', 'false'],
+    ['llm_fallback_to_rules', 'true'],
+    ['anthropic_api_key', ''],
+    ['openai_api_key', ''],
+    ['gemini_api_key', ''],
+    ['claude_model', 'claude-sonnet-4-20250514'],
+    ['openai_model', 'gpt-4o-mini'],
+    ['gemini_model', 'gemini-2.0-flash'],
+  ];
+  for (const [k, v] of llmDefaults) {
+    wrapper.rawDb.run(`INSERT OR IGNORE INTO app_config (key, value) VALUES (?, ?)`, [k, v]);
   }
 
   wrapper.saveToDisk();

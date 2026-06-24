@@ -35,13 +35,15 @@ export async function POST(): Promise<NextResponse> {
 
   // ── LLM Analysis (after transcription) ──────────────────────────
   let llmResult: { analyzed: number; errors: string[] } | null = null;
+  const llmEnabled = await isLLMEnabled();
 
-  if (isLLMEnabled()) {
+  if (llmEnabled) {
     try {
       llmResult = await runLLMAnalysis();
     } catch (e: any) {
       console.error('[Transcribe] LLM analysis error:', e);
-      if (!shouldFallbackToRules()) {
+      const fallback = await shouldFallbackToRules();
+      if (!fallback) {
         return NextResponse.json({
           success: false,
           error: `LLM分析失败: ${e.message}`,
@@ -49,7 +51,6 @@ export async function POST(): Promise<NextResponse> {
           llm_error: true,
         }, { status: 500 });
       }
-      // Fall through: keep rule-based results
     }
   }
 
@@ -60,7 +61,7 @@ export async function POST(): Promise<NextResponse> {
     llm: llmResult
       ? { analyzed: llmResult.analyzed, errors: llmResult.errors }
       : null,
-    llm_skipped: !isLLMEnabled(),
+    llm_skipped: !llmEnabled,
   });
 }
 
