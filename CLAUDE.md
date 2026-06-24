@@ -50,6 +50,10 @@ npm start            # 生产启动
 | `exam_results` | AI考试演练明细（维度二，7维评分） | — |
 | `store_performance` | 门店绩效（店效），store_id UNIQUE | `store_id`→stores |
 | `competitor_sales` | 友商竞品销量，每竞品一行 | `store_id`→stores |
+| `call_recordings` | 录音合集（音频/Word 文档） | — |
+| `knowledge_base` | 知识库（高频问答、卖点） | — |
+| `insight_analysis` | 亮点与暗点分析 | — |
+| `region_baseline` | 区域基准（偏差校正） | — |
 
 ### 种子数据
 
@@ -91,7 +95,7 @@ npm start            # 生产启动
 | `/stores` | 门店管理：新增/编辑/删除门店，按区域筛选 |
 | `/store-efficiency` | 店效分析：门店销量录入、竞品管理、对比柱状图 |
 | `/sales` | 销量分析：Excel 导入 + 多维度图表 + 明细表 |
-| `/capability` | 能力诊断：销代能力记录 + 讲解覆盖率 + 机型矩阵 |
+| `/capability` | 能力诊断：销代能力记录 + 讲解覆盖率 + 机型矩阵 + 录音分析 + 知识库 |
 
 ## 数据流
 
@@ -103,3 +107,35 @@ Excel 零售报表 → /api/sales (POST) → sales 表
 ```
 
 销量导入时自动匹配门店（按名称/编码）和机型（新建或关联），按订单号去重。
+
+## 录音分析模块
+
+- **录音文件**: 放入 `数据库/录音合集/` 目录，支持 .m4a/.mp3/.wav/.docx
+- **转写脚本**: `scripts/transcribe.py`，使用 Python `whisper`（需联网下载模型）和 `python-docx`
+- **上传方式**: 前端直接上传（FormData）或扫描文件夹
+- **AI 分析**: 转写后自动调用 LLM（Claude/OpenAI/Gemini）分析讲解表现（6维度评分）
+- **LLM 接口**: `POST /api/ai/analyze` 独立可用，支持多 provider 可配置切换
+- **知识库提取**: 从转写文本中提取高频问答、卖点，对比成交/未成交录音分析亮点与暗点
+
+### LLM 配置（`.env.local`）
+
+```env
+LLM_PROVIDER=claude        # claude | openai | gemini | mock
+USE_LLM_ANALYSIS=false     # 转写后自动启用 LLM 分析
+ANTHROPIC_API_KEY=sk-ant-...  # Claude API Key
+OPENAI_API_KEY=sk-...         # OpenAI API Key
+GEMINI_API_KEY=...             # Gemini API Key
+```
+
+`USE_LLM_ANALYSIS=false` 时保留现有关键词分析作为 fallback。
+
+## Electron 打包
+
+```bash
+npm run electron:dev   # 开发模式（Next.js + Electron）
+npm run electron:build # 构建安装程序
+```
+
+- 配置文件: `electron/main.js`, `electron/preload.js`
+- 构建输出: `release/win-unpacked/`（免安装版）、`release/人效分析工具 Setup 1.0.0.exe`（安装程序）
+- ⚠️ 由于网络原因，Whisper 模型下载可能超时，需配置国内镜像或离线部署
